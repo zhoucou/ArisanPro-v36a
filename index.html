@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArisanPro Dashboard</title>
+    
+    <!-- 1. Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. Babel Standalone (Untuk menerjemahkan JSX di browser) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        /* Mencegah flash of unstyled content */
+        body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        #root:empty::before {
+            content: 'Memuat ArisanPro...';
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            color: #64748b;
+            font-weight: bold;
+            font-size: 0.875rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 antialiased">
+    <div id="root"></div>
+
+    <!-- 3. Skrip React menggunakan ES Modules (ESM) -->
+    <script type="text/babel" data-type="module">
+        // Import React & ReactDOM
+        import React, { useState, useEffect, useMemo } from 'https://esm.sh/react@18.2.0';
+        import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
+        
+        // Import Firebase
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, updateDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+        
+        // Import Recharts & Lucide Icons
+        import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart as RechartsPieChart, Pie, Cell } from 'https://esm.sh/recharts@2.12.0?deps=react@18.2.0,react-dom@18.2.0';
+        import { Trash2, Users, Plus, LayoutGrid, LogOut, Sparkles, ChevronLeft, BarChart3, PieChart as PieChartIcon, CalendarOff, ListChecks, CheckCircle, Clock, AlertTriangle, ArrowUpCircle, UserPlus, Trophy, RotateCcw, UserSquare2, Calendar, Edit2, History, Info, Coins, MessageCircle, Copy, Activity, Lock, Globe } from 'https://esm.sh/lucide-react@0.368.0?deps=react@18.2.0';
+
+        // --- KONFIGURASI FIREBASE ---
+        // Jika Anda men-deploy ini ke Vercel Anda sendiri, ubah fallbackConfig dengan data dari Firebase Console Anda
+        const fallbackConfig = {
+            apiKey: "ISI_API_KEY_ANDA",
+            authDomain: "ISI_DOMAIN_ANDA",
+            projectId: "ISI_PROJECT_ID",
+            storageBucket: "ISI_BUCKET",
+            messagingSenderId: "ISI_SENDER_ID",
+            appId: "ISI_APP_ID"
+        };
+        
+        // Mendeteksi apakah berjalan di editor interaktif atau di Vercel public
+        const isCanvas = typeof __firebase_config !== 'undefined';
+        const firebaseConfig = isCanvas ? JSON.parse(__firebase_config) : fallbackConfig;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'arisan-pro-v36';
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- KOMPONEN UTAMA APLIKASI ---
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [userProfile, setUserProfile] = useState(null);
+            const [groups, setGroups] = useState([]);
+            const [activeGroupId, setActiveGroupId] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [storageMode, setStorageMode] = useState('private');
+
+            const today = new Date();
+            const [reportMonth, setReportMonth] = useState(today.getMonth() + 1); 
+            const [reportYear, setReportYear] = useState(today.getFullYear());
+            const [showNotification, setShowNotification] = useState(null);
+
+            const [winnerForm, setWinnerForm] = useState({ id: '', month: today.getMonth() + 1, year: today.getFullYear() });
+            const [profileForm, setProfileForm] = useState({ name: '', email: '' });
+            
+            const [editingMemberId, setEditingMemberId] = useState(null);
+            const [editMemberForm, setEditMemberForm] = useState({ name: '', email: '', joinDate: '' });
+
+            const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+            // Helpers
+            const notify = (msg) => {
+                setShowNotification(msg);
+                setTimeout(() => setShowNotification(null), 3000);
+            };
+
+            const handleUpdateProfile = async (e) => {
+                if (e) e.preventDefault();
+                if (!user) return;
+                const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid);
+                const updatedData = { name: profileForm.name, email: profileForm.email };
+                await updateDoc(userDocRef, updatedData);
+                setUserProfile(prev => ({ ...prev, ...updatedData }));
+                notify("Profil pribadi diperbarui!");
+            };
+
+            // Authentication
+            useEffect(() => {
+                const initAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (err) {
+                        console.error("Auth Error:", err);
+                    }
+                };
+                initAuth();
+
+                const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+                    if (firebaseUser) {
+                        setUser(firebaseUser);
+                        const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', firebaseUser.uid);
+                        const snap = await getDoc(userDocRef);
+                        
+                        if (snap.exists()) {
+                            const data = snap.data();
+                            setUserProfile(data);
+                            setProfileForm({ name: data.name || '', email: data.email || '' });
+                        } else {
+                            const newProfile = {
+                                uid: firebaseUser.uid,
+                                name: 'Pengguna Baru',
+                                email: '',
+                                role: 'owner',
+                                status: 'approved',
+                                createdAt: new Date().toISOString()
+                            };
+                            await setDoc(userDocRef, newProfile);
+                            setUserProfile(newProfile);
+                            setProfileForm({ name: newProfile.name, email: '' });
+                        }
+                    } else {
+                        setUser(null);
+                        setUserProfile(null);
+                    }
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // Data Sync
+            useEffect(() => {
+                if (!user) return;
+                const path = storageMode === 'private' 
+                    ? collection(db, 'artifacts', appId, 'users', user.uid, 'groups')
+                    : collection(db, 'artifacts', appId, 'public', 'data', 'groups');
+
+                const unsubGroups = onSnapshot(path, (snap) => {
+                    const gData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setGroups(gData);
+                }, (error) => console.error("Error fetching groups:", error));
+
+                return () => unsubGroups();
+            }, [user, storageMode]);
+
+            const currentGroupPath = useMemo(() => {
+                if (!user || !activeGroupId) return null;
+                return storageMode === 'private'
+                    ? doc(db, 'artifacts', appId, 'users', user.uid, 'groups', activeGroupId)
+                    : doc(db, 'artifacts', appId, 'public', 'data', 'groups', activeGroupId);
+            }, [user, activeGroupId, storageMode]);
+
+            // Calculations
+            const activeGroup = useMemo(() => groups.find(g => g.id === activeGroupId), [groups, activeGroupId]);
+            
+            const fullHistoryAnalysis = useMemo(() => {
+                if (!activeGroup) return { monthlyBreakdown: [], totalArrearsAmount: 0, globalPaidAmount: 0 };
+                const [sY, sM] = (activeGroup.startDate || "2025-01").split('-').map(Number);
+                let curr = new Date(sY, sM - 1, 1);
+                const end = new Date(reportYear, reportMonth - 1, 1);
+                const trs = activeGroup.transactions || [];
+                const holidays = activeGroup.holidays || [];
+                const breakdown = [];
+                let totalArrearsAmount = 0;
+                let globalPaidAmount = 0;
+
+                while (curr <= end) {
+                    const cM = curr.getMonth() + 1; const cY = curr.getFullYear();
+                    const periodKey = `${cY}-${cM}`;
+                    const isHoliday = holidays.includes(periodKey);
+                    const eligibleMembers = activeGroup.members || [];
+
+                    if (isHoliday) {
+                        breakdown.push({ monthName: months[cM - 1], year: cY, paidCount: 0, unpaidCount: 0, paidAmount: 0, unpaidAmount: 0, totalEligible: eligibleMembers.length, isHoliday: true });
+                    } else {
+                        const paidTxs = trs.filter(t => t.category === 'iuran' && t.targetMonth === cM && t.targetYear === cY);
+                        const pAmount = paidTxs.reduce((acc, t) => acc + t.amount, 0);
+                        const uCount = eligibleMembers.length - paidTxs.length;
+                        const uAmount = uCount * activeGroup.contribution;
+                        breakdown.push({ monthName: months[cM - 1], year: cY, paidCount: paidTxs.length, unpaidCount: uCount, paidAmount: pAmount, unpaidAmount: uAmount, totalEligible: eligibleMembers.length, isHoliday: false });
+                        totalArrearsAmount += uAmount;
+                        globalPaidAmount += pAmount;
+                    }
+                    curr.setMonth(curr.getMonth() + 1);
+                }
+                return { monthlyBreakdown: breakdown.reverse(), totalArrearsAmount, globalPaidAmount };
+            }, [activeGroup, reportMonth, reportYear, months]);
+
+            const stats = useMemo(() => {
+                if (!activeGroup) return null;
+                const membersCount = activeGroup.members?.length || 0;
+                const winAmount = membersCount * activeGroup.contribution;
+                const winners = activeGroup.members?.filter(m => m.hasWon).length || 0;
+                const totalPayout = winners * winAmount;
+                return { 
+                    totalIuranMasuk: fullHistoryAnalysis.globalPaidAmount, 
+                    balance: fullHistoryAnalysis.globalPaidAmount - totalPayout, 
+                    totalPayout, 
+                    membersCount, 
+                    winAmount 
+                };
+            }, [activeGroup, fullHistoryAnalysis]);
+
+            const reportData = useMemo(() => {
+                if (!activeGroup) return { paid: [], notPaid: [], arrears: [], isHoliday: false };
+                const trs = activeGroup.transactions || [];
+                const members = activeGroup.members || [];
+                const isHoliday = (activeGroup.holidays || []).includes(`${reportYear}-${reportMonth}`);
+                if (isHoliday) return { paid: [], notPaid: [], arrears: [], isHoliday: true };
+                
+                const paidTxs = trs.filter(t => t.category === 'iuran' && t.targetMonth === reportMonth && t.targetYear === reportYear);
+                const paidIds = new Set(paidTxs.map(t => t.memberId));
+                
+                const paid = members.filter(m => paidIds.has(m.id)).map(m => ({ ...m, paymentTx: paidTxs.find(t => t.memberId === m.id) }));
+                const notPaid = members.filter(m => !paidIds.has(m.id));
+                
+                const arrears = members.map(m => {
+                    const [sY, sM] = (activeGroup.startDate || "2025-01").split('-').map(Number);
+                    let c = new Date(sY, sM - 1, 1);
+                    const list = [];
+                    while (c < new Date(reportYear, reportMonth - 1, 1)) {
+                        const cm = c.getMonth() + 1; const cy = c.getFullYear();
+                        if (!(activeGroup.holidays || []).includes(`${cy}-${cm}`) && !trs.some(t => t.category === 'iuran' && t.targetMonth === cm && t.targetYear === cy && t.memberId === m.id)) {
+                            list.push(`${months[cm-1].substring(0,3)} ${cy}`);
+                        }
+                        c.setMonth(c.getMonth() + 1);
+                    }
+                    return { ...m, list };
+                }).filter(m => m.list.length > 0);
+
+                return { paid, notPaid, arrears, isHoliday: false };
+            }, [activeGroup, reportMonth, reportYear, months]);
+
+            const chartDataBar = useMemo(() => {
+                const recentData = fullHistoryAnalysis.monthlyBreakdown.slice(0, 6).reverse();
+                return recentData.map(row => ({
+                    name: `${row.monthName.substring(0,3)} '${row.year.toString().substring(2)}`,
+                    Lunas: row.isHoliday ? 0 : row.paidAmount,
+                    Tunggakan: row.isHoliday ? 0 : row.unpaidAmount,
+                    isHoliday: row.isHoliday
+                }));
+            }, [fullHistoryAnalysis]);
+
+            const chartDataPie = useMemo(() => {
+                if (reportData.isHoliday) return [];
+                return [
+                    { name: 'Sudah Lunas', value: reportData.paid.length, color: '#10b981' }, 
+                    { name: 'Belum Setor', value: reportData.notPaid.length, color: '#f43f5e' } 
+                ];
+            }, [reportData]);
+
+            const PIE_COLORS = ['#10b981', '#f43f5e'];
+
+            // Actions
+            const handleToggleHoliday = async () => {
+                if(!user) return;
+                const periodKey = `${reportYear}-${reportMonth}`;
+                const holidays = activeGroup.holidays || [];
+                const updated = holidays.includes(periodKey) ? holidays.filter(h => h !== periodKey) : [...holidays, periodKey];
+                await updateDoc(currentGroupPath, { holidays: updated });
+                notify("Status periode diubah.");
+            };
+
+            const handleCreateGroup = async (e) => {
+                e.preventDefault();
+                if(!user) return;
+                const name = e.target.name.value;
+                const amt = Number(e.target.amt.value);
+                const date = e.target.date.value;
+                const newId = Date.now().toString();
+                const groupData = { name, contribution: amt, startDate: date, members: [], transactions: [], holidays: [], createdAt: new Date().toISOString() };
+                
+                const path = storageMode === 'private' 
+                    ? doc(db, 'artifacts', appId, 'users', user.uid, 'groups', newId)
+                    : doc(db, 'artifacts', appId, 'public', 'data', 'groups', newId);
+                
+                await setDoc(path, groupData);
+                e.target.reset();
+                notify("Grup arisan berhasil dibuat!");
+            };
+
+            const handleDeleteGroup = async (id) => {
+                if(!user) return;
+                const path = storageMode === 'private' 
+                    ? doc(db, 'artifacts', appId, 'users', user.uid, 'groups', id)
+                    : doc(db, 'artifacts', appId, 'public', 'data', 'groups', id);
+                await deleteDoc(path);
+                setActiveGroupId(null);
+                notify("Grup dihapus.");
+            };
+
+            const handleAddMember = async (e) => {
+                e.preventDefault();
+                if(!user) return;
+                const name = e.target.name.value;
+                const joinDate = e.target.date.value;
+                const newMember = { id: Date.now(), name, hasWon: false, joinDate };
+                await updateDoc(currentGroupPath, { members: [...(activeGroup.members || []), newMember] });
+                e.target.reset();
+                notify("Peserta baru didaftarkan.");
+            };
+
+            const handleDeleteMember = async (mid) => {
+                if(!user) return;
+                const updated = activeGroup.members.filter(m => m.id !== mid);
+                await updateDoc(currentGroupPath, { members: updated });
+                notify("Peserta dihapus.");
+            };
+
+            const saveEditMember = async () => {
+                if(!user) return;
+                const updated = activeGroup.members.map(m => m.id === editingMemberId ? { ...m, name: editMemberForm.name, joinDate: editMemberForm.joinDate } : m);
+                await updateDoc(currentGroupPath, { members: updated });
+                setEditingMemberId(null);
+                notify("Data peserta diperbarui.");
+            };
+
+            const recordIuran = async (memberId, amount, m, y, date) => {
+                if(!user) return;
+                const member = activeGroup.members.find(mem => mem.id === Number(memberId));
+                const tr = { 
+                    id: Date.now(), 
+                    type: 'income', 
+                    category: 'iuran', 
+                    memberId: member.id, 
+                    title: `Iuran (${months[m-1]} ${y}): ${member.name}`, 
+                    amount: Number(amount), 
+                    date: date || today.toISOString().split('T')[0], 
+                    targetMonth: Number(m), 
+                    targetYear: Number(y) 
+                };
+                await updateDoc(currentGroupPath, { transactions: [tr, ...(activeGroup.transactions || [])] });
+                notify("Setoran lunas dicatat.");
+            };
+
+            const handleRecordIuranForm = (e) => {
+                e.preventDefault();
+                const mid = e.target.memId.value;
+                const m = e.target.m.value;
+                const y = e.target.y.value;
+                const amt = e.target.amt.value;
+                const date = e.target.date.value;
+                recordIuran(mid, amt, m, y, date);
+                e.target.reset();
+            };
+
+            const deleteIuran = async (txId) => {
+                if(!user) return;
+                const updated = activeGroup.transactions.filter(t => t.id !== txId);
+                await updateDoc(currentGroupPath, { transactions: updated });
+                notify("Status setoran dibatalkan.");
+            };
+
+            const handleSetWinner = async () => {
+                if(!user) return;
+                if (!winnerForm.id) return notify("Pilih anggota!");
+                const updated = activeGroup.members.map(m => m.id === Number(winnerForm.id) ? { ...m, hasWon: true, winMonth: Number(winnerForm.month), winYear: Number(winnerForm.year) } : m);
+                await updateDoc(currentGroupPath, { members: updated });
+                setWinnerForm({ ...winnerForm, id: '' });
+                notify("Pemenang telah disahkan!");
+            };
+
+            const handleRevertWinner = async (mid) => {
+                if(!user) return;
+                const updated = activeGroup.members.map(m => m.id === mid ? { ...m, hasWon: false, winMonth: null, winYear: null } : m);
+                await updateDoc(currentGroupPath, { members: updated });
+                notify("Pemenang dianulir.");
+            };
+
+            const handleCopyReport = () => {
+                const text = `📢 LAPORAN ARISAN: ${activeGroup.name}\n📅 Periode: ${months[reportMonth-1]} ${reportYear}\n\n👥 Peserta Aktif: ${stats.membersCount} Orang\n✅ Lunas: ${reportData.paid.length}\n❌ Belum: ${reportData.notPaid.length}\n\n💰 Saldo Kas: Rp ${stats.balance.toLocaleString()}\n⚠️ Piutang: Rp ${fullHistoryAnalysis.totalArrearsAmount.toLocaleString()}\n🏆 Hadiah: Rp ${stats.winAmount.toLocaleString()}\n\nHarap lunas iuran ya. 🙏`;
+                const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
+                notify("Laporan disalin.");
+            };
+
+            const sendReminder = (name) => {
+                const msg = `Halo ${name}, pengingat iuran arisan ${activeGroup.name} periode ${months[reportMonth-1]}. 🙏`;
+                window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+            };
+
+            // Rendering
+            if (loading) return (
+                <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white">
+                    <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                    <p className="font-black uppercase tracking-widest text-[10px] opacity-50">Sinkronisasi Cloud...</p>
+                </div>
+            );
+
+            if (!userProfile || userProfile.name === 'Pengguna Baru') return (
+                <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-10 text-left">
+                        <h1 className="text-3xl font-black text-slate-800 tracking-tighter mb-2">Aktifkan ArisanPro</h1>
+                        <p className="text-slate-400 text-sm mb-10 font-medium">Lengkapi identitas untuk mulai mengelola arisan Anda.</p>
+                        <form onSubmit={handleUpdateProfile} className="space-y-4">
+                            <input type="text" required placeholder="Nama Anda" className="w-full bg-slate-50 border-none rounded-2xl px-6 py-4 outline-none font-bold text-left" value={profileForm.name} onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })} />
+                            <button type="submit" className="w-full bg-slate-800 text-white font-black py-5 rounded-3xl shadow-xl hover:bg-indigo-600 transition-all uppercase text-xs tracking-widest mt-4">Mulai Sekarang</button>
+                        </form>
+                    </div>
+                </div>
+            );
+
+            if (!activeGroupId) return (
+                <div className="min-h-screen bg-slate-50 pb-20 text-left">
+                    <header className="bg-white border-b border-slate-100 p-6 flex justify-between items-center shadow-sm sticky top-0 z-40">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><Users className="w-5 h-5 text-left" /></div>
+                            <h1 className="font-black text-slate-800 text-lg uppercase tracking-tighter">ArisanPro <span className="text-indigo-600">v36</span></h1>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button 
+                                onClick={() => setStorageMode(storageMode === 'private' ? 'public' : 'private')}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-[10px] font-black uppercase transition-all ${storageMode === 'private' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'}`}
+                            >
+                                {storageMode === 'private' ? <Lock className="w-3 h-3 text-left"/> : <Globe className="w-3 h-3 text-left"/>}
+                                Mode: {storageMode}
+                            </button>
+                            <button onClick={() => auth.signOut()} className="p-2.5 text-slate-400 hover:text-rose-500 bg-slate-50 rounded-xl transition-all text-left"><LogOut className="w-5 h-5" /></button>
+                        </div>
+                    </header>
+
+                    <main className="max-w-7xl mx-auto p-6 space-y-10">
+                        <div className="bg-indigo-600 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden">
+                            <Sparkles className="absolute -right-4 -top-4 w-40 h-40 opacity-10 rotate-12" />
+                            <h2 className="text-3xl font-black tracking-tighter relative z-10 text-left">Halo, {userProfile.name}!</h2>
+                            <p className="text-indigo-100 mt-2 font-medium opacity-80 relative z-10 max-w-md text-left">Kelola arisan dengan laporan iuran yang akurat.</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 text-left">
+                            <aside className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 h-fit">
+                                <h2 className="font-black text-slate-800 mb-6 uppercase text-xs tracking-widest flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-500" /> Grup Baru</h2>
+                                <form onSubmit={handleCreateGroup} className="space-y-4">
+                                    <input name="name" type="text" placeholder="Nama Arisan" required className="w-full bg-slate-50 border-none rounded-2xl px-5 py-4 outline-none font-bold text-sm text-left" />
+                                    <input name="amt" type="number" placeholder="Nominal Iuran" required className="w-full bg-slate-50 border-none rounded-2xl px-5 py-4 outline-none font-black text-sm text-indigo-600 text-left" />
+                                    <div className="space-y-1">
+                                        <label className="text-[9px] font-black text-slate-400 uppercase ml-2">Bulan Mulai</label>
+                                        <input name="date" type="month" required className="w-full bg-slate-50 border-none rounded-2xl px-5 py-4 outline-none font-bold text-sm text-left" />
+                                    </div>
+                                    <button className="w-full bg-slate-800 text-white font-black py-4 rounded-3xl shadow-xl hover:bg-indigo-600 transition-all uppercase text-[10px] tracking-widest">Buat Grup</button>
+                                </form>
+                            </aside>
+
+                            <div className="lg:col-span-2 space-y-4">
+                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Grup Terdaftar ({storageMode})</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {groups.map(g => (
+                                        <div key={g.id} className="bg-white rounded-[2.5rem] p-8 border border-slate-100 hover:border-indigo-400 cursor-pointer shadow-sm relative group text-left transition-all hover:translate-y-[-4px]" onClick={() => setActiveGroupId(g.id)}>
+                                            <LayoutGrid className="w-10 h-10 text-indigo-600 mb-6" />
+                                            <h4 className="font-black text-slate-800 text-2xl truncate mb-1">{g.name}</h4>
+                                            <div className="flex gap-2 mb-4">
+                                                <span className="bg-indigo-50 text-indigo-600 text-[8px] font-black px-2 py-1 rounded-full uppercase">Rp {g.contribution.toLocaleString()}</span>
+                                                <span className="bg-emerald-50 text-emerald-600 text-[8px] font-black px-2 py-1 rounded-full uppercase">{g.members?.length || 0} Member</span>
+                                            </div>
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteGroup(g.id); }} className="absolute top-8 right-8 text-slate-100 hover:text-rose-500 transition-colors"><Trash2 className="w-5 h-5" /></button>
+                                        </div>
+                                    ))}
+                                    {groups.length === 0 && <p className="col-span-full py-20 text-center text-slate-300 italic text-sm">Belum ada grup.</p>}
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen bg-slate-50 pb-20 text-left">
+                    <nav className="bg-white border-b border-slate-100 sticky top-0 z-50 px-6 py-4 flex items-center justify-between shadow-sm">
+                        <button onClick={() => setActiveGroupId(null)} className="p-3 bg-slate-50 text-slate-400 hover:text-indigo-600 rounded-2xl"><ChevronLeft className="w-6 h-6" /></button>
+                        <div className="text-center">
+                            <h1 className="font-black text-slate-800 uppercase text-xl leading-none">{activeGroup.name}</h1>
+                            <p className="text-[10px] font-black text-indigo-600 uppercase mt-1 italic tracking-widest text-center">{months[reportMonth-1]} {reportYear}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className={`text-[8px] font-black px-2 py-1 rounded-full uppercase ${storageMode === 'private' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'}`}>{storageMode}</span>
+                        </div>
+                    </nav>
+
+                    <main className="max-w-7xl mx-auto p-6 space-y-8">
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                            <div className="bg-indigo-600 text-white p-6 rounded-[2rem] shadow-xl text-left">
+                                <p className="text-[10px] font-black uppercase opacity-70">Hadiah Arisan</p>
+                                <p className="text-lg font-black mt-1">Rp {stats.winAmount.toLocaleString()}</p>
+                            </div>
+                            <div className="bg-emerald-600 text-white p-6 rounded-[2rem] shadow-xl text-left">
+                                <p className="text-[10px] font-black uppercase opacity-70">Saldo Kas</p>
+                                <p className="text-lg font-black mt-1">Rp {stats.balance.toLocaleString()}</p>
+                            </div>
+                            <div className="bg-rose-600 text-white p-6 rounded-[2rem] shadow-xl text-left">
+                                <p className="text-[10px] font-black uppercase opacity-70">Total Piutang</p>
+                                <p className="text-lg font-black mt-1">Rp {fullHistoryAnalysis.totalArrearsAmount.toLocaleString()}</p>
+                            </div>
+                            <div className="bg-slate-800 text-white p-6 rounded-[2rem] shadow-xl text-left">
+                                <p className="text-[10px] font-black uppercase opacity-70">Uang Masuk</p>
+                                <p className="text-lg font-black mt-1">Rp {stats.totalIuranMasuk.toLocaleString()}</p>
+                                <p className="text-[8px] font-black uppercase opacity-50 mt-1 italic">s/d {months[reportMonth-1]} {reportYear}</p>
+                            </div>
+                            <div className="bg-white border border-slate-100 p-6 rounded-[2rem] text-left">
+                                <p className="text-[10px] font-black text-slate-400 uppercase">Total Peserta</p>
+                                <p className="text-lg font-black text-slate-800 mt-1">{stats.membersCount} Orang</p>
+                            </div>
+                        </div>
+
+                        {/* DASHBOARD CHARTS */}
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                            <section className="lg:col-span-2 bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden text-left p-8">
+                                <div className="flex items-center justify-between mb-8">
+                                    <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
+                                        <Activity className="w-5 h-5 text-indigo-500" /> Analitik Pendapatan & Piutang
+                                    </h3>
+                                    <span className="text-[10px] font-black text-slate-400 bg-slate-50 px-3 py-1 rounded-full uppercase">6 Bulan Terakhir</span>
+                                </div>
+                                <div className="h-64 w-full">
+                                    {chartDataBar.length > 0 ? (
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <BarChart data={chartDataBar} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 'bold' }} dy={10} />
+                                                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 'bold' }} tickFormatter={(val) => `Rp${val/1000}k`} />
+                                                <RechartsTooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '1.5rem', border: '1px solid #f1f5f9', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px', fontWeight: 'bold', fontSize: '12px' }} formatter={(value) => [`Rp ${value.toLocaleString()}`, undefined]} labelStyle={{ color: '#64748b', marginBottom: '4px', fontSize: '10px', textTransform: 'uppercase' }} />
+                                                <Legend iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: '900', paddingTop: '10px' }} />
+                                                <Bar dataKey="Lunas" name="Setoran Lunas" fill="#4f46e5" radius={[6, 6, 0, 0]} barSize={32} />
+                                                <Bar dataKey="Tunggakan" name="Total Tunggakan" fill="#f43f5e" radius={[6, 6, 0, 0]} barSize={32} />
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    ) : (
+                                        <div className="h-full flex items-center justify-center text-slate-300 text-xs font-bold italic">Belum ada data analitik.</div>
+                                    )}
+                                </div>
+                            </section>
+
+                            <section className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden text-left p-8 flex flex-col">
+                                <div className="flex items-center justify-between mb-2">
+                                    <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
+                                        <PieChartIcon className="w-5 h-5 text-indigo-500" /> Rasio Kepatuhan
+                                    </h3>
+                                </div>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase mb-4 text-left">Periode {months[reportMonth-1]} {reportYear}</p>
+                                
+                                <div className="flex-1 flex flex-col items-center justify-center relative min-h-[200px]">
+                                    {reportData.isHoliday ? (
+                                        <div className="text-center">
+                                            <CalendarOff className="w-10 h-10 text-amber-300 mx-auto mb-2" />
+                                            <span className="text-[10px] font-black text-slate-400 uppercase">Periode Libur</span>
+                                        </div>
+                                    ) : chartDataPie.reduce((acc, curr) => acc + curr.value, 0) > 0 ? (
+                                        <ResponsiveContainer width="100%" height={220}>
+                                            <RechartsPieChart>
+                                                <Pie data={chartDataPie} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" stroke="none">
+                                                    {chartDataPie.map((entry, index) => <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />)}
+                                                </Pie>
+                                                <RechartsTooltip contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontWeight: 'bold', fontSize: '11px' }} formatter={(value, name) => [`${value} Orang`, name]} />
+                                            </RechartsPieChart>
+                                        </ResponsiveContainer>
+                                    ) : (
+                                        <span className="text-[10px] font-black text-slate-400 uppercase">Belum ada anggota.</span>
+                                    )}
+                                    
+                                    {!reportData.isHoliday && chartDataPie.reduce((acc, curr) => acc + curr.value, 0) > 0 && (
+                                        <div className="flex gap-4 mt-4">
+                                            {chartDataPie.map((entry, index) => (
+                                                <div key={index} className="flex items-center gap-1.5">
+                                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: PIE_COLORS[index] }}></div>
+                                                    <span className="text-[10px] font-black text-slate-600 uppercase">{entry.name} ({entry.value})</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </section>
+                        </div>
+
+                        <section className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden text-left">
+                            <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                                <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2"><BarChart3 className="w-5 h-5 text-indigo-500" /> Ringkasan Historis</h3>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase">
+                                        <tr><th className="px-8 py-4">Bulan / Tahun</th><th className="px-8 py-4 text-center">Status</th><th className="px-8 py-4 text-center">Lunas</th><th className="px-8 py-4 text-center">Belum</th><th className="px-8 py-4">Jumlah Piutang</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {fullHistoryAnalysis.monthlyBreakdown.map((row, idx) => (
+                                        <tr key={idx} className={`hover:bg-slate-50/50 transition-colors ${row.isHoliday ? 'bg-slate-50/30 opacity-70' : ''}`}>
+                                            <td className="px-8 py-5 text-left"><p className="font-black text-slate-800 text-xs">{row.monthName} {row.year}</p></td>
+                                            <td className="px-8 py-5 text-center">{row.isHoliday ? <span className="bg-slate-200 text-slate-500 text-[8px] font-black px-2 py-1 rounded uppercase">LIBUR</span> : <span className="bg-indigo-50 text-indigo-600 text-[8px] font-black px-2 py-1 rounded uppercase">AKTIF</span>}</td>
+                                            <td className="px-8 py-5 text-center"><span className="font-black text-slate-700 text-[10px]">{row.paidCount} Mem</span></td>
+                                            <td className="px-8 py-5 text-center"><span className={`text-[10px] font-black ${row.unpaidCount > 0 ? 'text-rose-500' : 'text-slate-300'}`}>{row.unpaidCount} Mem</span></td>
+                                            <td className="px-8 py-5 text-left"><p className={`font-black ${row.unpaidAmount > 0 ? 'text-rose-500' : 'text-slate-300'} text-xs`}>{row.isHoliday ? 'Rp 0' : `Rp ${row.unpaidAmount.toLocaleString()}`}</p></td>
+                                        </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        <section className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden text-left">
+                            <div className="p-8 border-b border-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                                <div className="text-left">
+                                    <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2"><ListChecks className="w-5 h-5 text-indigo-500" /> Monitoring Setoran</h3>
+                                    <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Periode: {months[reportMonth-1]} {reportYear}</p>
+                                </div>
+                                <div className="flex flex-wrap gap-2 items-center">
+                                    <button onClick={handleToggleHoliday} className={`p-2.5 rounded-xl transition-all ${reportData.isHoliday ? 'bg-amber-100 text-amber-600 shadow-lg shadow-amber-50' : 'bg-slate-50 text-slate-400 hover:text-amber-500'}`}><CalendarOff className="w-5 h-5" /></button>
+                                    <button onClick={handleCopyReport} className="bg-slate-800 text-white text-[10px] font-black px-5 py-3 rounded-2xl flex items-center gap-2 hover:bg-indigo-600 transition-all uppercase tracking-widest mr-2"><Copy className="w-4 h-4" /> Laporan WA</button>
+                                    <select className="bg-slate-50 border-none text-[10px] font-black rounded-xl px-4 py-2 outline-none" value={reportMonth} onChange={e => setReportMonth(Number(e.target.value))}>{months.map((m, i) => <option key={i} value={i+1}>{m}</option>)}</select>
+                                    <select className="bg-slate-50 border-none text-[10px] font-black rounded-xl px-4 py-2 outline-none" value={reportYear} onChange={e => setReportYear(Number(e.target.value))}>{[2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}</select>
+                                </div>
+                            </div>
+
+                            {!reportData.isHoliday ? (
+                                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-50 text-left">
+                                    <div className="p-8">
+                                        <h4 className="font-black text-emerald-500 uppercase text-[10px] tracking-widest mb-6 flex items-center gap-2"><CheckCircle className="w-4 h-4"/> Sudah Lunas ({reportData.paid.length})</h4>
+                                        <div className="space-y-4">
+                                            {reportData.paid.map(m => (
+                                                <div key={m.id} className="flex justify-between items-center p-5 rounded-3xl bg-emerald-50/20 border border-emerald-100">
+                                                    <div><p className="font-black text-slate-800 text-xs">{m.name}</p><p className="text-[9px] text-emerald-600 font-bold mt-1">Rp {m.paymentTx.amount.toLocaleString()}</p></div>
+                                                    <button onClick={() => deleteIuran(m.paymentTx.id)} className="p-2.5 text-rose-500 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="p-8 bg-rose-50/5">
+                                        <h4 className="font-black text-rose-500 uppercase text-[10px] tracking-widest mb-6 flex items-center gap-2"><Clock className="w-4 h-4"/> Belum Setor ({reportData.notPaid.length})</h4>
+                                        <div className="space-y-4">
+                                            {reportData.notPaid.map(m => (
+                                                <div key={m.id} className="flex justify-between items-center p-5 rounded-3xl bg-white border border-rose-100 shadow-sm">
+                                                    <p className="font-black text-slate-800 text-xs">{m.name}</p>
+                                                    <div className="flex gap-1">
+                                                        <button onClick={() => recordIuran(m.id, activeGroup.contribution, reportMonth, reportYear, today.toISOString().split('T')[0])} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-2 shadow-lg shadow-indigo-100"><Coins className="w-3 h-3" /> Bayar</button>
+                                                        <button onClick={() => sendReminder(m.name)} className="text-rose-500 p-2.5 hover:bg-rose-50 rounded-xl transition-all"><MessageCircle className="w-4 h-4" /></button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="p-8 bg-amber-50/10">
+                                        <h4 className="font-black text-amber-500 uppercase text-[10px] tracking-widest mb-6 flex items-center gap-2"><AlertTriangle className="w-4 h-4"/> Tunggakan Lalu ({reportData.arrears.length})</h4>
+                                        <div className="space-y-4">
+                                            {reportData.arrears.map(m => (
+                                                <div key={m.id} className="p-5 rounded-3xl bg-white border border-amber-200 shadow-sm">
+                                                    <p className="font-black text-slate-800 text-xs">{m.name}</p>
+                                                    <div className="flex flex-wrap gap-1.5 mt-3">
+                                                        {m.list.map((l, i) => <span key={i} className="bg-rose-50 text-rose-500 text-[8px] font-black px-2 py-1 rounded-lg uppercase">{l}</span>)}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="p-24 text-center">
+                                    <CalendarOff className="w-16 h-16 text-amber-500 mx-auto mb-6" />
+                                    <h4 className="font-black text-slate-800 uppercase tracking-widest text-left text-center">Periode Libur</h4>
+                                </div>
+                            )}
+                        </section>
+
+                        <section className="bg-white p-12 rounded-[3rem] shadow-sm border border-slate-100 text-left">
+                            <div className="flex items-center gap-4 mb-10">
+                                <div className="bg-indigo-600 p-3 rounded-[1.5rem] text-white shadow-xl shadow-indigo-100"><ArrowUpCircle className="w-7 h-7" /></div>
+                                <div>
+                                    <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest">Setor Arisan (Input Manual)</h3>
+                                    <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Mencatat iuran spesifik sesuai pilihan bulan/tahun</p>
+                                </div>
+                            </div>
+                            <form onSubmit={handleRecordIuranForm} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8">
+                                <div className="space-y-3">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Pilih Member</label>
+                                    <select name="memId" required className="w-full bg-slate-50 border-none rounded-2xl px-6 py-5 text-xs font-bold outline-none">
+                                        <option value="">-- Nama Peserta --</option>
+                                        {(activeGroup?.members || []).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                    </select>
+                                </div>
+                                <div className="space-y-3 lg:col-span-2">
+                                    <label className="text-[10px] font-black text-indigo-500 uppercase ml-2">Tagihan Bulan & Tahun</label>
+                                    <div className="flex gap-3">
+                                        <select name="m" defaultValue={reportMonth} className="flex-1 bg-indigo-50 border-none rounded-2xl px-6 py-5 text-[11px] font-black outline-none">{months.map((m, i) => <option key={i} value={i+1}>{m}</option>)}</select>
+                                        <select name="y" defaultValue={reportYear} className="flex-1 bg-indigo-50 border-none rounded-2xl px-6 py-5 text-[11px] font-black outline-none">{[2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}</select>
+                                    </div>
+                                </div>
+                                <div className="space-y-3">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Nominal Rp</label>
+                                    <input name="amt" type="number" defaultValue={activeGroup?.contribution} className="w-full bg-slate-50 border-none rounded-2xl px-6 py-5 outline-none font-black text-emerald-600 text-xs" />
+                                </div>
+                                <div className="space-y-3">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Tanggal Bayar</label>
+                                    <input name="date" type="date" defaultValue={today.toISOString().split('T')[0]} className="w-full bg-slate-50 border-none rounded-2xl px-6 py-5 text-xs font-bold outline-none" />
+                                </div>
+                                <button type="submit" className="lg:col-span-5 bg-indigo-600 text-white font-black py-6 rounded-[2rem] shadow-2xl hover:bg-indigo-700 transition-all uppercase text-xs tracking-widest">Simpan Pembayaran</button>
+                            </form>
+                        </section>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
+                            <section className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="bg-indigo-600 p-2.5 rounded-2xl text-white"><UserPlus className="w-5 h-5" /></div>
+                                    <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest">Daftar Anggota Baru</h3>
+                                </div>
+                                <form onSubmit={handleAddMember} className="space-y-5">
+                                    <input name="name" type="text" placeholder="Nama Lengkap" className="w-full bg-slate-50 border-none rounded-2xl px-5 py-4 outline-none font-bold text-xs" required />
+                                    <div className="space-y-1">
+                                        <label className="text-[9px] font-black text-slate-400 uppercase ml-2">Terdaftar Sejak</label>
+                                        <input name="date" type="date" defaultValue={today.toISOString().split('T')[0]} className="w-full bg-slate-50 border-none rounded-2xl px-5 py-4 outline-none font-bold text-xs" required />
+                                    </div>
+                                    <button type="submit" className="w-full bg-slate-800 text-white font-black py-5 rounded-3xl shadow-xl hover:bg-indigo-600 transition-all uppercase text-[10px]">Daftarkan Peserta</button>
+                                </form>
+                            </section>
+
+                            <section className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-emerald-100">
+                                <h3 className="font-black text-emerald-600 uppercase text-xs mb-6 tracking-widest flex items-center gap-2"><Trophy className="w-5 h-5" /> Penentuan Pemenang</h3>
+                                <div className="space-y-5">
+                                    <select className="w-full bg-emerald-50 border-none rounded-2xl px-5 py-4 text-xs font-bold text-emerald-900 outline-none" value={winnerForm.id} onChange={(e) => setWinnerForm({ ...winnerForm, id: e.target.value })}>
+                                        <option value="">-- Cari Nama --</option>
+                                        {activeGroup?.members?.filter(m => !m.hasWon).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                    </select>
+                                    <div className="flex gap-2">
+                                        <select className="flex-1 bg-white border border-emerald-100 rounded-xl px-4 py-3 text-[10px] font-black uppercase" value={winnerForm.month} onChange={(e) => setWinnerForm({ ...winnerForm, month: e.target.value })}>{months.map((m, i) => <option key={i} value={i+1}>{m}</option>)}</select>
+                                        <select className="flex-1 bg-white border border-emerald-100 rounded-xl px-4 py-3 text-[10px] font-black uppercase" value={winnerForm.year} onChange={(e) => setWinnerForm({ ...winnerForm, year: e.target.value })}>{[2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}</select>
+                                    </div>
+                                    <button onClick={handleSetWinner} className="w-full bg-emerald-600 text-white font-black py-5 rounded-3xl shadow-xl hover:bg-emerald-700 uppercase text-[10px]">Sahkan Pemenang</button>
+                                </div>
+                                <div className="mt-8 pt-6 border-t border-emerald-50 max-h-40 overflow-y-auto text-left">
+                                    {activeGroup?.members?.filter(m => m.hasWon).map(m => (
+                                        <div key={m.id} className="p-4 bg-emerald-50/50 rounded-2xl mb-2 flex justify-between items-center text-left">
+                                            <div className="text-left"><p className="font-black text-emerald-900 text-[10px] leading-none text-left">{m.name}</p><p className="text-[8px] text-emerald-600 uppercase font-black mt-1 text-left">🏆 Hadiah: Rp {stats.winAmount.toLocaleString()} ({months[m.winMonth-1]} {m.winYear})</p></div>
+                                            <button onClick={() => handleRevertWinner(m.id)} className="text-rose-400 hover:text-rose-600 text-left"><RotateCcw className="w-4 h-4 text-left" /></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
+                        </div>
+
+                        <section className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden text-left">
+                            <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                                <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2"><UserSquare2 className="w-5 h-5 text-indigo-500" /> Kelola Peserta Grup</h3>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-8 text-left">
+                                {activeGroup?.members?.map(m => (
+                                    <div key={m.id} className="p-6 rounded-[2rem] border border-slate-100 bg-slate-50/50 hover:bg-white hover:shadow-2xl transition-all">
+                                        {editingMemberId === m.id ? (
+                                            <div className="space-y-4">
+                                                <input className="w-full bg-white border border-indigo-100 rounded-xl px-4 py-3 text-xs font-bold outline-none" value={editMemberForm.name} onChange={e => setEditMemberForm({...editMemberForm, name: e.target.value})} />
+                                                <input type="date" className="w-full bg-white border border-indigo-100 rounded-xl px-4 py-3 text-xs font-bold outline-none" value={editMemberForm.joinDate} onChange={e => setEditMemberForm({...editMemberForm, joinDate: e.target.value})} />
+                                                <div className="flex gap-2">
+                                                    <button onClick={saveEditMember} className="flex-1 bg-indigo-600 text-white py-2 rounded-xl text-[10px] font-black uppercase text-center">Simpan</button>
+                                                    <button onClick={() => setEditingMemberId(null)} className="flex-1 bg-slate-200 text-slate-600 py-2 rounded-xl text-[10px] font-black uppercase text-center">Batal</button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="flex justify-between items-start">
+                                                <div className="text-left">
+                                                    <p className="font-black text-slate-800 text-sm truncate">{m.name}</p>
+                                                    <p className="text-[10px] font-bold text-slate-400 uppercase mt-1 flex items-center gap-1"><Calendar className="w-3 h-3"/> {new Date(m.joinDate).toLocaleDateString()}</p>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => { setEditingMemberId(m.id); setEditMemberForm({ name: m.name, joinDate: m.joinDate }); }} className="p-2 text-slate-300 hover:text-indigo-600"><Edit2 className="w-4 h-4" /></button>
+                                                    <button onClick={() => handleDeleteMember(m.id)} className="p-2 text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+
+                        <div className="bg-white rounded-[3rem] shadow-sm border border-slate-100 overflow-hidden text-left">
+                            <div className="p-10 border-b border-slate-50 flex items-center justify-between">
+                                <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2"><History className="w-5 h-5 text-indigo-500" /> Log Transaksi Terakhir</h3>
+                            </div>
+                            <div className="max-h-[500px] overflow-y-auto">
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase sticky top-0 z-10">
+                                        <tr><th className="px-10 py-5">Uraian</th><th className="px-10 py-5">Jumlah</th><th className="px-10 py-5 text-right">Aksi</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {(activeGroup?.transactions || []).map(t => (
+                                        <tr key={t.id} className="hover:bg-slate-50 group transition-colors">
+                                            <td className="px-10 py-6 text-left">
+                                                <p className="font-black text-slate-800 text-xs">{t.title}</p>
+                                                <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">{new Date(t.date).toLocaleDateString()}</p>
+                                            </td>
+                                            <td className="px-10 py-6 font-black text-xs text-emerald-600">+ Rp {t.amount.toLocaleString()}</td>
+                                            <td className="px-10 py-6 text-right">
+                                                <button onClick={() => deleteIuran(t.id)} className="text-slate-200 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 className="w-5 h-5" /></button>
+                                            </td>
+                                        </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </main>
+
+                    {showNotification && (
+                        <div className="fixed bottom-12 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-10 py-5 rounded-[2rem] shadow-2xl flex items-center gap-4 z-[100] animate-in slide-in-from-bottom-5 duration-300">
+                            <Info className="w-6 h-6 text-indigo-400" /><span className="text-[11px] font-black uppercase tracking-widest">{showNotification}</span>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
